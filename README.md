@@ -1,5 +1,8 @@
 # @prole-island/dev-tools
 
+[![npm version](https://badge.fury.io/js/@prole-island%2Fdev-tools.svg)](https://www.npmjs.com/package/@prole-island/dev-tools)
+[![CI](https://github.com/PROLE-ISLAND/dev-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/PROLE-ISLAND/dev-tools/actions/workflows/ci.yml)
+
 PROLE-ISLAND 統合開発ツール - v0生成、リポジトリ初期化、Claude Code設定
 
 ## インストール
@@ -82,6 +85,23 @@ prole claude              # 設定状況確認
 prole claude --setup      # .claude/ 設定ファイル生成
 prole claude --mcp github # MCPサーバー追加
 ```
+
+---
+
+### `prole sync` - テンプレート同期
+
+既存リポジトリのテンプレートを最新版に更新。
+
+```bash
+prole sync              # テンプレートを最新化
+prole sync --dry-run    # 変更内容をプレビュー
+prole sync --force      # 既存ファイルを強制上書き
+```
+
+**動作:**
+- PROLE-ISLAND/.github から最新テンプレートを取得
+- ISSUE_TEMPLATE, workflows を更新
+- CLAUDE.md の組織共通セクションのみ更新（プロジェクト固有部分は保持）
 
 ---
 
