@@ -7,19 +7,22 @@ import { v0Command } from './commands/v0.js';
 import { issueCommand } from './commands/issue.js';
 import { claudeCommand } from './commands/claude.js';
 import { syncCommand } from './commands/sync.js';
+import { validateCommand } from './commands/validate.js';
 
 const program = new Command();
 
 program
   .name('prole')
   .description('PROLE-ISLAND 統合開発ツール')
-  .version('0.1.0');
+  .version('0.2.0');
 
 // init command
 program
   .command('init')
   .description('リポジトリを初期化（CLAUDE.md, .github/, .claude/）')
-  .option('-t, --template <type>', 'テンプレートタイプ (nextjs, storyblok)', 'nextjs')
+  .option('-t, --template <type>', 'テンプレートタイプ (nextjs, storyblok, library)', 'nextjs')
+  .option('-w, --workflows <list>', 'ワークフローを指定 (ci,pr-check,v0-generate)')
+  .option('-a, --all-workflows', '全ワークフローを適用', false)
   .option('-f, --force', '既存ファイルを上書き', false)
   .action(initCommand);
 
@@ -27,6 +30,8 @@ program
 program
   .command('v0 [prompt]')
   .description('v0.devでUIを生成')
+  .option('-t, --template <name>', 'テンプレートを使用 (form, table, card, empty-state等)')
+  .option('-l, --list-templates', 'テンプレート一覧を表示', false)
   .option('-s, --save <file>', '生成コードをファイルに保存')
   .option('-o, --open', 'ブラウザでデモを開く', false)
   .action(v0Command);
@@ -55,6 +60,14 @@ program
   .option('-d, --dry-run', '変更内容をプレビュー（実際には変更しない）', false)
   .option('-f, --force', '既存ファイルを強制上書き', false)
   .action(syncCommand);
+
+// validate command
+program
+  .command('validate')
+  .description('リポジトリの設定を検証')
+  .option('-f, --fix', '問題を自動修正（prole sync を実行）', false)
+  .option('-v, --verbose', '詳細表示', false)
+  .action(validateCommand);
 
 // Default: show help
 program.parse();

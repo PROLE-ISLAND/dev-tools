@@ -1,6 +1,6 @@
 {
   "name": "@prole-island/dev-tools",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "PROLE-ISLAND 統合開発ツール - v0生成、リポジトリ初期化、Claude Code設定",
   "type": "module",
   "bin": {

@@ -20,49 +20,60 @@ npx @prole-island/dev-tools <command>
 新規リポジトリに開発体制をセットアップ。
 
 ```bash
-prole init
-prole init --template storyblok  # Storyblokテンプレート
-prole init --force               # 既存ファイルを上書き
+prole init                          # 基本初期化
+prole init --template storyblok     # Storyblokテンプレート
+prole init --template library       # ライブラリ用テンプレート
+prole init --all-workflows          # 全ワークフロー適用
+prole init --workflows ci,v0-generate  # ワークフロー指定
+prole init --force                  # 既存ファイルを上書き
 ```
 
 **作成されるファイル:**
-- `.github/workflows/ci.yml` - CI設定
+- `.github/workflows/` - CI/CD設定（テンプレート別に自動選択）
 - `.github/ISSUE_TEMPLATE/` - Issue/PRテンプレート
 - `.github/dependabot.yml` - 依存関係更新
-- `CLAUDE.md` - 開発ルール
-- `.claude/settings.json` - Claude Code設定
+- `CLAUDE.md` - 開発ルール（組織共通 + プロジェクト固有）
+- `.claude/settings.json` - Claude Code設定（MCPサーバー含む）
 
 ---
 
 ### `prole v0` - v0 UI生成
 
-v0.devでUIコンポーネントを生成。
+v0.devでUIコンポーネントを生成。**テンプレート機能対応！**
 
 ```bash
 # 基本
-prole v0 "空状態コンポーネント作成。shadcn/ui使用、ダークモード対応"
+prole v0 "空状態コンポーネント作成"
+
+# テンプレート使用（推奨）
+prole v0 "ユーザー登録" --template form
+prole v0 "候補者一覧" --template table
+prole v0 "データなし表示" --template empty-state
 
 # ファイル保存
 prole v0 "ユーザーテーブル" --save src/components/user-table.tsx
 
 # ブラウザでデモを開く
 prole v0 "ログインフォーム" --open
+
+# テンプレート一覧表示
+prole v0 --list-templates
 ```
+
+**利用可能なテンプレート:**
+| テンプレート | 説明 |
+|-------------|------|
+| `base` | 汎用コンポーネント |
+| `form` | 入力フォーム（react-hook-form + zod） |
+| `table` | データテーブル |
+| `card` | カードコンポーネント |
+| `dashboard` | ダッシュボード |
+| `empty-state` | 空状態表示 |
 
 **環境変数:**
 ```bash
 export V0_API_KEY=your_key_here
 # 取得: https://v0.dev/chat/settings/keys
-```
-
-**プロンプトのコツ:**
-```
-空状態コンポーネント作成。
-- shadcn/uiのCard使用
-- Tailwind CSS
-- ダークモード対応
-- 日本語テキスト
-- アイコン: Users（Lucide、48px）
 ```
 
 ---
@@ -105,15 +116,50 @@ prole sync --force      # 既存ファイルを強制上書き
 
 ---
 
+### `prole validate` - 設定検証 🆕
+
+リポジトリが組織標準に準拠しているか検証。
+
+```bash
+prole validate           # 設定を検証
+prole validate --verbose # 詳細表示
+prole validate --fix     # 問題を自動修正（prole sync を実行）
+```
+
+**検証項目:**
+- CLAUDE.md の存在と組織テンプレート同期
+- .claude/settings.json の設定
+- .github/ 構造（Issue/PRテンプレート、Dependabot）
+- CIワークフローの存在
+- 組織テンプレートとの同期状態
+
+**出力例:**
+```
+📋 検証結果:
+
+✅ CLAUDE.md - 組織テンプレートと同期済み
+✅ .claude/settings.json - 設定OK
+✅ .github/ISSUE_TEMPLATE/ - 2個のテンプレート
+⚠️ CI ワークフロー - CIワークフローがありません
+
+📊 サマリー:
+   ✅ Pass: 3  ⚠️ Warn: 1  ❌ Fail: 0
+
+統一度スコア: 75%
+```
+
+---
+
 ## 開発フロー
 
 ```
 1. prole init                    # リポジトリ初期化
-2. prole issue                   # 開発可能Issue確認
-3. git checkout -b feature/...   # ブランチ作成
-4. prole v0 "プロンプト"          # UI生成
-5. 開発・テスト
-6. gh pr create                  # PR作成
+2. prole validate                # 設定検証
+3. prole issue                   # 開発可能Issue確認
+4. git checkout -b feature/...   # ブランチ作成
+5. prole v0 "プロンプト" -t form # UI生成
+6. 開発・テスト
+7. gh pr create                  # PR作成
 ```
 
 ---
@@ -135,6 +181,21 @@ prole sync --force      # 既存ファイルを強制上書き
 - GitHub Copilot
 - Windsurf
 - その他のAIコーディングツール
+
+---
+
+## 変更履歴
+
+### v0.2.0
+- `prole v0 --template` でv0-templates統合
+- `prole v0 --list-templates` でテンプレート一覧
+- `prole init --workflows` でワークフロー指定
+- `prole init --all-workflows` で全ワークフロー
+- `prole validate` コマンド追加（設定検証）
+- `.claude/settings.json` にMCPサーバー標準設定追加
+
+### v0.1.0
+- 初回リリース
 
 ---
 

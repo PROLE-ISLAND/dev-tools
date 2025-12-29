@@ -8,11 +8,27 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 interface InitOptions {
-  template: 'nextjs' | 'storyblok';
+  template: 'nextjs' | 'storyblok' | 'library';
   force: boolean;
+  workflows?: string;
+  allWorkflows: boolean;
 }
 
 const ORG_GITHUB_REPO = 'PROLE-ISLAND/.github';
+
+// Template-specific workflow configurations
+const TEMPLATE_WORKFLOWS: Record<string, string[]> = {
+  'nextjs': ['ci.yml', 'pr-check.yml'],
+  'storyblok': ['ci.yml', 'pr-check.yml'],
+  'library': ['ci.yml', 'pr-check.yml'],
+};
+
+// Available workflows with descriptions
+const WORKFLOW_INFO: Record<string, string> = {
+  'ci.yml': 'CI（lint, 型チェック, テスト, ビルド）',
+  'pr-check.yml': 'PR規約チェック',
+  'v0-generate.yml': 'v0.dev UI自動生成（ラベルトリガー）',
+};
 
 export async function initCommand(options: InitOptions) {
   const spinner = ora('最新テンプレートを取得中...').start();
@@ -24,15 +40,19 @@ export async function initCommand(options: InitOptions) {
 
     const templates = await fetchOrgTemplates();
 
-    // 2. Create .github directory structure
-    spinner.text = '.github/ を作成中...';
-    await createGitHubStructure(cwd, templates, options);
+    // 2. Determine which workflows to apply
+    const selectedWorkflows = determineWorkflows(templates.workflows, options);
+    spinner.text = `Workflows: ${selectedWorkflows.join(', ')}`;
 
-    // 3. Create/update CLAUDE.md
+    // 3. Create .github directory structure
+    spinner.text = '.github/ を作成中...';
+    await createGitHubStructure(cwd, templates, selectedWorkflows, options);
+
+    // 4. Create/update CLAUDE.md
     spinner.text = 'CLAUDE.md を作成中...';
     await createClaudeMd(cwd, templates, options);
 
-    // 4. Create .claude directory
+    // 5. Create .claude directory
     spinner.text = '.claude/ を作成中...';
     await createClaudeConfig(cwd, options);
 
@@ -40,12 +60,18 @@ export async function initCommand(options: InitOptions) {
 
     console.log(`
 ${chalk.cyan('取得元:')} https://github.com/${ORG_GITHUB_REPO}
-${chalk.cyan('テンプレートは常に最新版が適用されます')}
+${chalk.cyan('テンプレート:')} ${options.template}
+${chalk.cyan('適用ワークフロー:')} ${selectedWorkflows.join(', ')}
 
 ${chalk.yellow('次のステップ:')}
   1. CLAUDE.md をプロジェクトに合わせて編集
   2. V0_API_KEY を環境変数に設定
   3. ${chalk.cyan('prole v0 "コンポーネント作成"')} でUI生成開始
+
+${chalk.gray('v0 UI生成ワークフローを追加するには:')}
+  ${chalk.cyan('prole init --workflows v0-generate')}
+  ${chalk.gray('または')}
+  ${chalk.cyan('prole init --all-workflows')}
 `);
   } catch (error) {
     spinner.fail(chalk.red('初期化に失敗しました'));
@@ -57,6 +83,35 @@ ${chalk.yellow('次のステップ:')}
     console.log(chalk.yellow('\nフォールバック: ローカルテンプレートを使用します'));
     await createLocalTemplates(cwd, options);
   }
+}
+
+function determineWorkflows(
+  availableWorkflows: Record<string, string>,
+  options: InitOptions
+): string[] {
+  // If --all-workflows, use all available
+  if (options.allWorkflows) {
+    return Object.keys(availableWorkflows);
+  }
+
+  // If --workflows specified, parse and validate
+  if (options.workflows) {
+    const requested = options.workflows.split(',').map(w => w.trim());
+    const valid = requested.filter(w => {
+      const filename = w.endsWith('.yml') ? w : `${w}.yml`;
+      if (!availableWorkflows[filename]) {
+        console.log(chalk.yellow(`  警告: ワークフロー「${w}」が見つかりません`));
+        return false;
+      }
+      return true;
+    });
+    // Normalize to .yml extension
+    return valid.map(w => w.endsWith('.yml') ? w : `${w}.yml`);
+  }
+
+  // Default: use template-specific workflows
+  const templateWorkflows = TEMPLATE_WORKFLOWS[options.template] || TEMPLATE_WORKFLOWS['nextjs'];
+  return templateWorkflows.filter(w => availableWorkflows[w]);
 }
 
 interface OrgTemplates {
@@ -132,7 +187,12 @@ async function listGitHubDirectory(repo: string, dirPath: string): Promise<strin
   }
 }
 
-async function createGitHubStructure(cwd: string, templates: OrgTemplates, options: InitOptions) {
+async function createGitHubStructure(
+  cwd: string,
+  templates: OrgTemplates,
+  selectedWorkflows: string[],
+  options: InitOptions
+) {
   const githubDir = path.join(cwd, '.github');
   const workflowsDir = path.join(githubDir, 'workflows');
   const issueTemplateDir = path.join(githubDir, 'ISSUE_TEMPLATE');
@@ -150,9 +210,14 @@ async function createGitHubStructure(cwd: string, templates: OrgTemplates, optio
     await writeFileIfNotExists(path.join(githubDir, 'PULL_REQUEST_TEMPLATE.md'), templates.prTemplate, options.force);
   }
 
-  // Write workflow templates from org
-  for (const [filename, content] of Object.entries(templates.workflows)) {
-    await writeFileIfNotExists(path.join(workflowsDir, filename), content, options.force);
+  // Write only selected workflow templates
+  for (const filename of selectedWorkflows) {
+    const content = templates.workflows[filename];
+    if (content) {
+      await writeFileIfNotExists(path.join(workflowsDir, filename), content, options.force);
+      const info = WORKFLOW_INFO[filename] || filename;
+      console.log(chalk.blue(`  ワークフロー: ${filename} (${info})`));
+    }
   }
 
   // Dependabot (always create locally as it's repo-specific)
@@ -171,6 +236,8 @@ updates:
 }
 
 async function createClaudeMd(cwd: string, templates: OrgTemplates, options: InitOptions) {
+  const techStack = getTechStackForTemplate(options.template);
+
   if (templates.claudeMd) {
     // Use org template as base, add project-specific header
     const projectClaudeMd = `# プロジェクト固有の開発ルール
@@ -178,10 +245,7 @@ async function createClaudeMd(cwd: string, templates: OrgTemplates, options: Ini
 <!-- このセクションをプロジェクトに合わせて編集 -->
 
 ## 技術スタック
-- Next.js 15+ (App Router)
-- TypeScript
-- Tailwind CSS v4
-- shadcn/ui
+${techStack}
 
 ---
 
@@ -192,6 +256,27 @@ ${templates.claudeMd}
     await writeFileIfNotExists(path.join(cwd, 'CLAUDE.md'), projectClaudeMd, options.force);
   } else {
     await createLocalClaudeMd(cwd, options);
+  }
+}
+
+function getTechStackForTemplate(template: string): string {
+  switch (template) {
+    case 'storyblok':
+      return `- Next.js 15+ (App Router)
+- TypeScript
+- Tailwind CSS v4
+- shadcn/ui
+- Storyblok CMS`;
+    case 'library':
+      return `- TypeScript
+- tsup (ビルド)
+- Vitest (テスト)`;
+    case 'nextjs':
+    default:
+      return `- Next.js 15+ (App Router)
+- TypeScript
+- Tailwind CSS v4
+- shadcn/ui`;
   }
 }
 
@@ -216,6 +301,12 @@ async function createClaudeConfig(cwd: string, options: InitOptions) {
     },
     env: {
       V0_API_KEY: "${V0_API_KEY}"
+    },
+    mcpServers: {
+      "filesystem": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/mcp-filesystem"]
+      }
     }
   };
 
@@ -265,13 +356,11 @@ jobs:
 }
 
 async function createLocalClaudeMd(cwd: string, options: InitOptions) {
+  const techStack = getTechStackForTemplate(options.template);
   const claudeMd = `# プロジェクト開発ルール
 
 ## 技術スタック
-- Next.js 15+
-- TypeScript
-- Tailwind CSS v4
-- shadcn/ui
+${techStack}
 
 ## Issue駆動開発
 
