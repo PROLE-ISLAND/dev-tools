@@ -6,6 +6,7 @@ import { initCommand } from './commands/init.js';
 import { v0Command } from './commands/v0.js';
 import { issueCommand } from './commands/issue.js';
 import { claudeCommand } from './commands/claude.js';
+import { syncCommand } from './commands/sync.js';
 
 const program = new Command();
 
@@ -46,6 +47,14 @@ program
   .option('-s, --setup', '.claude/設定ファイル生成', false)
   .option('-m, --mcp <server>', 'MCPサーバー追加')
   .action(claudeCommand);
+
+// sync command
+program
+  .command('sync')
+  .description('テンプレートを最新版に同期')
+  .option('-d, --dry-run', '変更内容をプレビュー（実際には変更しない）', false)
+  .option('-f, --force', '既存ファイルを強制上書き', false)
+  .action(syncCommand);
 
 // Default: show help
 program.parse();
