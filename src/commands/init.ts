@@ -2,43 +2,45 @@ import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs-extra';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const execAsync = promisify(exec);
 
 interface InitOptions {
   template: 'nextjs' | 'storyblok';
   force: boolean;
 }
 
+const ORG_GITHUB_REPO = 'PROLE-ISLAND/.github';
+
 export async function initCommand(options: InitOptions) {
-  const spinner = ora('リポジトリを初期化中...').start();
+  const spinner = ora('最新テンプレートを取得中...').start();
   const cwd = process.cwd();
 
   try {
-    // 1. Create .github directory structure
+    // 1. Fetch templates from organization .github repo
+    spinner.text = 'PROLE-ISLAND/.github から最新テンプレートを取得中...';
+
+    const templates = await fetchOrgTemplates();
+
+    // 2. Create .github directory structure
     spinner.text = '.github/ を作成中...';
-    await createGitHubStructure(cwd, options);
+    await createGitHubStructure(cwd, templates, options);
 
-    // 2. Create CLAUDE.md
+    // 3. Create/update CLAUDE.md
     spinner.text = 'CLAUDE.md を作成中...';
-    await createClaudeMd(cwd, options);
+    await createClaudeMd(cwd, templates, options);
 
-    // 3. Create .claude directory
+    // 4. Create .claude directory
     spinner.text = '.claude/ を作成中...';
     await createClaudeConfig(cwd, options);
 
     spinner.succeed(chalk.green('リポジトリの初期化が完了しました！'));
 
     console.log(`
-${chalk.cyan('作成されたファイル:')}
-  - .github/workflows/ci.yml
-  - .github/ISSUE_TEMPLATE/bug_report.yml
-  - .github/ISSUE_TEMPLATE/feature_request.yml
-  - .github/PULL_REQUEST_TEMPLATE.md
-  - .github/dependabot.yml
-  - CLAUDE.md
-  - .claude/settings.json
+${chalk.cyan('取得元:')} https://github.com/${ORG_GITHUB_REPO}
+${chalk.cyan('テンプレートは常に最新版が適用されます')}
 
 ${chalk.yellow('次のステップ:')}
   1. CLAUDE.md をプロジェクトに合わせて編集
@@ -47,12 +49,90 @@ ${chalk.yellow('次のステップ:')}
 `);
   } catch (error) {
     spinner.fail(chalk.red('初期化に失敗しました'));
-    console.error(error);
-    process.exit(1);
+    if (error instanceof Error) {
+      console.error(chalk.red(error.message));
+    }
+
+    // Fallback to local templates if fetch fails
+    console.log(chalk.yellow('\nフォールバック: ローカルテンプレートを使用します'));
+    await createLocalTemplates(cwd, options);
   }
 }
 
-async function createGitHubStructure(cwd: string, options: InitOptions) {
+interface OrgTemplates {
+  claudeMd: string | null;
+  issueTemplates: Record<string, string>;
+  prTemplate: string | null;
+  workflows: Record<string, string>;
+}
+
+async function fetchOrgTemplates(): Promise<OrgTemplates> {
+  const templates: OrgTemplates = {
+    claudeMd: null,
+    issueTemplates: {},
+    prTemplate: null,
+    workflows: {},
+  };
+
+  try {
+    // Fetch CLAUDE.md
+    templates.claudeMd = await fetchGitHubFile(ORG_GITHUB_REPO, 'CLAUDE.md');
+
+    // Fetch ISSUE_TEMPLATE files
+    const issueTemplateFiles = await listGitHubDirectory(ORG_GITHUB_REPO, 'ISSUE_TEMPLATE');
+    for (const file of issueTemplateFiles) {
+      if (file.endsWith('.yml') || file.endsWith('.yaml')) {
+        const content = await fetchGitHubFile(ORG_GITHUB_REPO, `ISSUE_TEMPLATE/${file}`);
+        if (content) {
+          templates.issueTemplates[file] = content;
+        }
+      }
+    }
+
+    // Fetch PR template
+    templates.prTemplate = await fetchGitHubFile(ORG_GITHUB_REPO, 'PULL_REQUEST_TEMPLATE.md');
+
+    // Fetch workflow templates
+    const workflowFiles = await listGitHubDirectory(ORG_GITHUB_REPO, 'workflow-templates');
+    for (const file of workflowFiles) {
+      if (file.endsWith('.yml')) {
+        const content = await fetchGitHubFile(ORG_GITHUB_REPO, `workflow-templates/${file}`);
+        if (content) {
+          templates.workflows[file] = content;
+        }
+      }
+    }
+
+  } catch (error) {
+    console.log(chalk.yellow('  一部のテンプレート取得に失敗、ローカルフォールバック使用'));
+  }
+
+  return templates;
+}
+
+async function fetchGitHubFile(repo: string, filePath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(
+      `gh api repos/${repo}/contents/${filePath} --jq '.content' | base64 -d`
+    );
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+async function listGitHubDirectory(repo: string, dirPath: string): Promise<string[]> {
+  try {
+    const { stdout } = await execAsync(
+      `gh api repos/${repo}/contents/${dirPath} --jq '.[].name'`
+    );
+    return stdout.trim().split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function createGitHubStructure(cwd: string, templates: OrgTemplates, options: InitOptions) {
   const githubDir = path.join(cwd, '.github');
   const workflowsDir = path.join(githubDir, 'workflows');
   const issueTemplateDir = path.join(githubDir, 'ISSUE_TEMPLATE');
@@ -60,160 +140,22 @@ async function createGitHubStructure(cwd: string, options: InitOptions) {
   await fs.ensureDir(workflowsDir);
   await fs.ensureDir(issueTemplateDir);
 
-  // CI workflow
-  const ciYml = `name: CI
+  // Write issue templates from org
+  for (const [filename, content] of Object.entries(templates.issueTemplates)) {
+    await writeFileIfNotExists(path.join(issueTemplateDir, filename), content, options.force);
+  }
 
-on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
+  // Write PR template from org
+  if (templates.prTemplate) {
+    await writeFileIfNotExists(path.join(githubDir, 'PULL_REQUEST_TEMPLATE.md'), templates.prTemplate, options.force);
+  }
 
-jobs:
-  ci:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test --if-present
-      - run: npm run build
-`;
+  // Write workflow templates from org
+  for (const [filename, content] of Object.entries(templates.workflows)) {
+    await writeFileIfNotExists(path.join(workflowsDir, filename), content, options.force);
+  }
 
-  await writeFileIfNotExists(path.join(workflowsDir, 'ci.yml'), ciYml, options.force);
-
-  // Bug report template
-  const bugReport = `name: Bug Report
-description: バグの報告
-title: "[Bug]: "
-labels: ["bug", "needs-triage"]
-body:
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      options:
-        - P0: Critical (システム停止)
-        - P1: High (主要機能に影響)
-        - P2: Medium (機能に影響あるが回避可能)
-        - P3: Low (軽微な問題)
-    validations:
-      required: true
-
-  - type: textarea
-    id: description
-    attributes:
-      label: バグの説明
-      description: 何が起きているか簡潔に説明してください
-    validations:
-      required: true
-
-  - type: textarea
-    id: steps
-    attributes:
-      label: 再現手順
-      description: バグを再現する手順
-      value: |
-        1.
-        2.
-        3.
-    validations:
-      required: true
-
-  - type: textarea
-    id: expected
-    attributes:
-      label: 期待される動作
-    validations:
-      required: true
-`;
-
-  await writeFileIfNotExists(path.join(issueTemplateDir, 'bug_report.yml'), bugReport, options.force);
-
-  // Feature request template
-  const featureRequest = `name: Feature Request
-description: 新機能の提案
-title: "[Enhancement]: "
-labels: ["enhancement", "needs-triage"]
-body:
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      options:
-        - P1: High
-        - P2: Medium
-        - P3: Low (Backlog)
-    validations:
-      required: true
-
-  - type: dropdown
-    id: dod-level
-    attributes:
-      label: DoD Level
-      description: 品質レベル
-      options:
-        - Bronze (80% coverage - Prototype)
-        - Silver (85% coverage - Development)
-        - Gold (95% coverage - Production)
-    validations:
-      required: true
-
-  - type: textarea
-    id: background
-    attributes:
-      label: Background
-      description: なぜこの機能が必要か
-    validations:
-      required: true
-
-  - type: textarea
-    id: description
-    attributes:
-      label: Feature Description
-      description: 実装したい機能の説明
-    validations:
-      required: true
-
-  - type: input
-    id: figma-link
-    attributes:
-      label: Figma Mockup Link
-      description: UI機能は必須。v0.devで生成した場合はそのURLでもOK
-
-  - type: input
-    id: v0-link
-    attributes:
-      label: v0 Generation Link (Optional)
-      description: v0.devでUIを生成した場合のURL
-`;
-
-  await writeFileIfNotExists(path.join(issueTemplateDir, 'feature_request.yml'), featureRequest, options.force);
-
-  // PR template
-  const prTemplate = `## Summary
-<!-- 変更内容を簡潔に説明 -->
-
-## Changes
-<!-- 変更点をリスト -->
--
-
-## Test Plan
-<!-- テスト方法 -->
-- [ ]
-
-## Related Issues
-<!-- closes #番号 -->
-`;
-
-  await writeFileIfNotExists(path.join(githubDir, 'PULL_REQUEST_TEMPLATE.md'), prTemplate, options.force);
-
-  // Dependabot
+  // Dependabot (always create locally as it's repo-specific)
   const dependabot = `version: 2
 updates:
   - package-ecosystem: "npm"
@@ -225,95 +167,32 @@ updates:
         patterns:
           - "*"
 `;
-
   await writeFileIfNotExists(path.join(githubDir, 'dependabot.yml'), dependabot, options.force);
 }
 
-async function createClaudeMd(cwd: string, options: InitOptions) {
-  const claudeMd = `# プロジェクト開発ルール
+async function createClaudeMd(cwd: string, templates: OrgTemplates, options: InitOptions) {
+  if (templates.claudeMd) {
+    // Use org template as base, add project-specific header
+    const projectClaudeMd = `# プロジェクト固有の開発ルール
+
+<!-- このセクションをプロジェクトに合わせて編集 -->
 
 ## 技術スタック
-<!-- プロジェクトに合わせて編集 -->
 - Next.js 15+ (App Router)
 - TypeScript
 - Tailwind CSS v4
 - shadcn/ui
 
-## 言語規約
-- UI/コンテンツ: 日本語
-- コード/コメント: 英語
-
 ---
 
-## Issue駆動開発
+# 組織共通ルール（PROLE-ISLAND/.github より）
 
-### 開発開始時の必須手順
-
-\`\`\`bash
-# 1. 開発可能なIssue確認
-gh issue list -l "ready-to-develop"
-
-# 2. Issue詳細確認
-gh issue view {番号}
-
-# 3. ブランチ作成
-git checkout -b feature/issue-{番号}-{説明}
-
-# 4. 開発完了後PR作成
-gh pr create --title "feat: {説明}" --body "closes #{番号}"
-\`\`\`
-
----
-
-## ラベル体系
-
-| ラベル | 意味 |
-|--------|------|
-| \`ready-to-develop\` | 開発可能 |
-| \`in-progress\` | 作業中 |
-| \`design-review\` | デザインレビュー待ち |
-| \`design-approved\` | デザイン承認済み |
-| \`no-ui\` | UI変更なし |
-
----
-
-## 品質基準 (DoD)
-
-| レベル | カバレッジ | 用途 |
-|-------|-----------|------|
-| Bronze | 80%+ | プロトタイプ |
-| Silver | 85%+ | 開発版 |
-| Gold | 95%+ | 本番 |
-
----
-
-## v0 + Figma ワークフロー
-
-UI機能は以下のフローで開発:
-
-1. 要件定義（プロンプト作成）
-2. \`prole v0 "プロンプト"\` でUI生成
-3. デモURLで確認
-4. コードを取り込み、デザインシステムに適合
-5. Issue作成（v0リンク添付）
-6. 実装・PR
-
----
-
-## コミット規則
-
-\`\`\`
-feat: 新機能
-fix: バグ修正
-docs: ドキュメント
-refactor: リファクタリング
-test: テスト
-ci: CI/CD
-chore: その他
-\`\`\`
+${templates.claudeMd}
 `;
-
-  await writeFileIfNotExists(path.join(cwd, 'CLAUDE.md'), claudeMd, options.force);
+    await writeFileIfNotExists(path.join(cwd, 'CLAUDE.md'), projectClaudeMd, options.force);
+  } else {
+    await createLocalClaudeMd(cwd, options);
+  }
 }
 
 async function createClaudeConfig(cwd: string, options: InitOptions) {
@@ -325,10 +204,14 @@ async function createClaudeConfig(cwd: string, options: InitOptions) {
       allow: [
         "Bash(git:*)",
         "Bash(npm:*)",
+        "Bash(npx:*)",
         "Bash(gh:*)",
+        "Bash(prole:*)",
         "Read",
         "Write",
-        "Edit"
+        "Edit",
+        "Glob",
+        "Grep"
       ]
     },
     env: {
@@ -341,6 +224,71 @@ async function createClaudeConfig(cwd: string, options: InitOptions) {
     JSON.stringify(settings, null, 2),
     options.force
   );
+}
+
+// Fallback functions for when GitHub fetch fails
+async function createLocalTemplates(cwd: string, options: InitOptions) {
+  const githubDir = path.join(cwd, '.github');
+  const workflowsDir = path.join(githubDir, 'workflows');
+  const issueTemplateDir = path.join(githubDir, 'ISSUE_TEMPLATE');
+
+  await fs.ensureDir(workflowsDir);
+  await fs.ensureDir(issueTemplateDir);
+
+  // Minimal CI workflow
+  const ciYml = `name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+`;
+  await writeFileIfNotExists(path.join(workflowsDir, 'ci.yml'), ciYml, options.force);
+
+  await createLocalClaudeMd(cwd, options);
+  await createClaudeConfig(cwd, options);
+
+  console.log(chalk.green('\n✓ ローカルテンプレートで初期化完了'));
+  console.log(chalk.yellow('  最新テンプレートを取得するには: gh auth login'));
+}
+
+async function createLocalClaudeMd(cwd: string, options: InitOptions) {
+  const claudeMd = `# プロジェクト開発ルール
+
+## 技術スタック
+- Next.js 15+
+- TypeScript
+- Tailwind CSS v4
+- shadcn/ui
+
+## Issue駆動開発
+
+\`\`\`bash
+gh issue list -l "ready-to-develop"
+git checkout -b feature/issue-{番号}-{説明}
+gh pr create --title "feat: {説明}" --body "closes #{番号}"
+\`\`\`
+
+## 品質基準 (DoD)
+| レベル | カバレッジ |
+|-------|-----------|
+| Bronze | 80%+ |
+| Silver | 85%+ |
+| Gold | 95%+ |
+`;
+  await writeFileIfNotExists(path.join(cwd, 'CLAUDE.md'), claudeMd, options.force);
 }
 
 async function writeFileIfNotExists(filePath: string, content: string, force: boolean) {
