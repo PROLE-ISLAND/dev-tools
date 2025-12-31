@@ -1,0 +1,28 @@
+# =====================================================
+# Stale Issues/PRs (dev-tools)
+# PROLE-ISLAND/.github の Reusable Workflow を使用
+# =====================================================
+
+name: Stale
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 毎日 UTC 0:00
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    uses: PROLE-ISLAND/.github/.github/workflows/reusable-stale.yml@main
+    with:
+      language: 'ja'
+      days_before_issue_stale: 30
+      days_before_issue_close: 7
+      days_before_pr_stale: 14
+      days_before_pr_close: 7
+      exempt_issue_labels: 'P0,P1,blocked,in-progress,decision'
+      exempt_pr_labels: 'blocked,in-progress'
+      operations_per_run: 30
