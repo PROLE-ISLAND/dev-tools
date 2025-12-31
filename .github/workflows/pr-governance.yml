@@ -1,0 +1,25 @@
+# =====================================================
+# PR Governance (dev-tools)
+# PROLE-ISLAND/.github の Reusable Workflow を使用
+# =====================================================
+
+name: PR Governance
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  governance:
+    uses: PROLE-ISLAND/.github/.github/workflows/reusable-pr-governance.yml@main
+    with:
+      language: 'ja'
+      require_why_section: true
+      require_issue_branch: false
+      enable_auto_labeler: true
+      enable_change_summary: true
+      enable_variant_check: false
