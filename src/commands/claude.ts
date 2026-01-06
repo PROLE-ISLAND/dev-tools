@@ -9,6 +9,7 @@ const execAsync = promisify(exec);
 
 interface ClaudeOptions {
   setup: boolean;
+  setupHooks: boolean;
   mcp?: string;
 }
 
@@ -16,6 +17,8 @@ export async function claudeCommand(options: ClaudeOptions) {
   try {
     if (options.setup) {
       await setupClaude();
+    } else if (options.setupHooks) {
+      await setupHooksFromGitHub();
     } else if (options.mcp) {
       await addMcpServer(options.mcp);
     } else {
@@ -185,5 +188,132 @@ async function addMcpServer(serverName: string) {
       console.log(`  ${chalk.cyan(name)}: ${info.description}`);
     });
     console.log(`\n${chalk.gray('カスタムサーバー追加:')} claude mcp add {name} -- {command}`);
+  }
+}
+
+async function setupHooksFromGitHub() {
+  console.log(chalk.cyan('\n🔧 PROLE-ISLAND Claude Code Hooks セットアップ\n'));
+
+  const spinner = ora('GitHub から Hooks を取得中...').start();
+
+  const REPO = 'PROLE-ISLAND/.github';
+  const claudeDir = path.join(process.env.HOME || '', '.claude');
+  const hooksDir = path.join(claudeDir, 'hooks');
+  const cacheDir = path.join(claudeDir, 'cache');
+  const commandsDir = path.join(claudeDir, 'commands');
+
+  try {
+    // Check gh auth
+    try {
+      await execAsync('gh auth status');
+    } catch {
+      spinner.fail(chalk.red('GitHub CLI が認証されていません'));
+      console.log(chalk.yellow('\n  gh auth login を実行してください'));
+      process.exit(1);
+    }
+
+    // Create directories
+    await fs.ensureDir(hooksDir);
+    await fs.ensureDir(cacheDir);
+    await fs.ensureDir(commandsDir);
+
+    // Fetch files from GitHub
+    const filesToFetch = [
+      { src: 'claude-code/hooks/gate.py', dest: path.join(hooksDir, 'gate.py') },
+      { src: 'claude-code/hooks/sync-guardrails.sh', dest: path.join(hooksDir, 'sync-guardrails.sh') },
+      { src: 'claude-code/cache/claude-guardrails.yaml', dest: path.join(cacheDir, 'claude-guardrails.yaml') },
+      { src: 'claude-code/commands/req.md', dest: path.join(commandsDir, 'req.md') },
+      { src: 'claude-code/commands/dev.md', dest: path.join(commandsDir, 'dev.md') },
+      { src: 'claude-code/commands/issue.md', dest: path.join(commandsDir, 'issue.md') },
+    ];
+
+    const results: { file: string; success: boolean }[] = [];
+
+    for (const { src, dest } of filesToFetch) {
+      try {
+        const { stdout } = await execAsync(
+          `gh api "repos/${REPO}/contents/${src}" --jq '.content' | base64 -d`
+        );
+        await fs.writeFile(dest, stdout);
+        results.push({ file: path.basename(dest), success: true });
+      } catch {
+        results.push({ file: path.basename(dest), success: false });
+      }
+    }
+
+    // Make shell scripts executable
+    try {
+      await execAsync(`chmod +x "${path.join(hooksDir, 'sync-guardrails.sh')}"`);
+    } catch {
+      // Ignore chmod errors on Windows
+    }
+
+    // Update settings.local.json
+    const settingsPath = path.join(claudeDir, 'settings.local.json');
+    let settings: Record<string, unknown> = {};
+
+    if (await fs.pathExists(settingsPath)) {
+      try {
+        settings = await fs.readJSON(settingsPath);
+        // Backup existing
+        await fs.copy(settingsPath, `${settingsPath}.backup`);
+      } catch {
+        settings = {};
+      }
+    }
+
+    // Add hooks configuration
+    if (!settings.hooks) {
+      settings.hooks = {};
+    }
+    const hooks = settings.hooks as Record<string, unknown>;
+
+    if (!hooks.PreToolUse) {
+      hooks.PreToolUse = [
+        {
+          matcher: 'Bash',
+          hooks: [
+            {
+              type: 'command',
+              command: 'python3 ~/.claude/hooks/gate.py',
+              timeout: 10000
+            }
+          ]
+        }
+      ];
+    }
+
+    await fs.writeJSON(settingsPath, settings, { spaces: 2 });
+
+    spinner.succeed(chalk.green('Hooks セットアップ完了！'));
+
+    // Show results
+    console.log(chalk.cyan('\nインストール済み:'));
+    results.forEach(({ file, success }) => {
+      if (success) {
+        console.log(chalk.green(`  ✓ ${file}`));
+      } else {
+        console.log(chalk.yellow(`  ⚠ ${file} (スキップ)`));
+      }
+    });
+
+    console.log(chalk.cyan('\n設定更新:'));
+    console.log(chalk.green('  ✓ ~/.claude/settings.local.json (PreToolUse Hook)'));
+
+    console.log(`
+${chalk.yellow('インストール済み機能:')}
+  /req   - 要件定義PR作成 (Phase 1-5 バリデーション)
+  /dev   - 実装PR作成 (要件トレーサビリティ)
+  /issue - Issue作成
+
+${chalk.cyan('使い方:')}
+  claude セッション内で上記コマンドを実行
+
+${chalk.gray('📚 ドキュメント:')} https://github.com/PROLE-ISLAND/.github/wiki
+`);
+
+  } catch (error) {
+    spinner.fail(chalk.red('セットアップに失敗しました'));
+    throw error;
   }
 }

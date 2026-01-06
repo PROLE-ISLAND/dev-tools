@@ -50,6 +50,7 @@ program
   .command('claude')
   .description('Claude Code設定')
   .option('-s, --setup', '.claude/設定ファイル生成', false)
+  .option('--setup-hooks', 'PROLE-ISLAND Hooks/Commands をインストール', false)
   .option('-m, --mcp <server>', 'MCPサーバー追加')
   .action(claudeCommand);
 

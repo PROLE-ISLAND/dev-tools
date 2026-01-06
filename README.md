@@ -92,10 +92,18 @@ prole issue --create      # 新規Issue作成（ブラウザで開く）
 ### `prole claude` - Claude Code設定
 
 ```bash
-prole claude              # 設定状況確認
-prole claude --setup      # .claude/ 設定ファイル生成
-prole claude --mcp github # MCPサーバー追加
+prole claude                # 設定状況確認
+prole claude --setup        # .claude/ 設定ファイル生成
+prole claude --setup-hooks  # PROLE-ISLAND Hooks/Commands インストール
+prole claude --mcp github   # MCPサーバー追加
 ```
+
+**`--setup-hooks` でインストールされるもの:**
+- `~/.claude/hooks/gate.py` - PreToolUse Hook（Issue/PR検証）
+- `~/.claude/commands/` - `/req`, `/dev`, `/issue` コマンド
+- `~/.claude/cache/claude-guardrails.yaml` - バリデーションルール
+
+> 詳細: [Claude-Codeルール (Wiki)](https://github.com/PROLE-ISLAND/.github/wiki/Claude-Code%E3%83%AB%E3%83%BC%E3%83%AB)
 
 ---
 
@@ -185,6 +193,11 @@ prole validate --fix     # 問題を自動修正（prole sync を実行）
 ---
 
 ## 変更履歴
+
+### v0.3.0
+- `prole claude --setup-hooks` で PROLE-ISLAND Hooks/Commands インストール
+- `/req`, `/dev`, `/issue` スラッシュコマンド対応
+- Phase 1-5 バリデーション Hook 統合
 
 ### v0.2.0
 - `prole v0 --template` でv0-templates統合
